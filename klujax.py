@@ -747,14 +747,22 @@ def factor_c128_impl(Ai, Aj, Ax, symbolic):
 @refactor_f64.def_impl
 def refactor_f64_impl(Ai, Aj, Ax, symbolic, numeric):
     n_lhs = Ax.shape[0]
-    call = jax.ffi.ffi_call("refactor_f64", jax.ShapeDtypeStruct((n_lhs,), jnp.uint64))
+    call = jax.ffi.ffi_call(
+        "refactor_f64",
+        jax.ShapeDtypeStruct((n_lhs,), jnp.uint64),
+        has_side_effect=True,
+    )
     return call(Ai, Aj, Ax, symbolic, numeric)
 
 
 @refactor_c128.def_impl
 def refactor_c128_impl(Ai, Aj, Ax, symbolic, numeric):
     n_lhs = Ax.shape[0]
-    call = jax.ffi.ffi_call("refactor_c128", jax.ShapeDtypeStruct((n_lhs,), jnp.uint64))
+    call = jax.ffi.ffi_call(
+        "refactor_c128",
+        jax.ShapeDtypeStruct((n_lhs,), jnp.uint64),
+        has_side_effect=True,
+    )
     return call(Ai, Aj, Ax, symbolic, numeric)
 
 
@@ -935,13 +943,17 @@ jax.ffi.register_ffi_target(
 
 @free_numeric_p.def_impl
 def free_numeric_impl(numeric):
-    call = jax.ffi.ffi_call("free_numeric", jax.ShapeDtypeStruct((), jnp.int32))
+    call = jax.ffi.ffi_call(
+        "free_numeric", jax.ShapeDtypeStruct((), jnp.int32), has_side_effect=True
+    )
     return call(numeric)
 
 
 @free_symbolic_p.def_impl
 def free_symbolic_impl(symbolic):
-    call = jax.ffi.ffi_call("free_symbolic", jax.ShapeDtypeStruct((), jnp.int32))
+    call = jax.ffi.ffi_call(
+        "free_symbolic", jax.ShapeDtypeStruct((), jnp.int32), has_side_effect=True
+    )
     return call(symbolic)
 
 
