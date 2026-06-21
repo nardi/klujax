@@ -1043,8 +1043,8 @@ def analyze_abstract_eval(Ai: Array, Aj: Array, n_col: Array) -> ShapedArray:
 
 
 @free_symbolic_p.def_abstract_eval
-def free_symbolic_abstract_eval(symbolic: Array) -> None:
-    return None
+def free_symbolic_abstract_eval(symbolic: Array) -> ShapedArray:
+    return ShapedArray((), jnp.int32)
 
 
 @factor_f64.def_abstract_eval
