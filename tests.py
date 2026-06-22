@@ -284,7 +284,9 @@ def test_solve_with_numeric_vmap_1d_b(dtype):
 
     def solve_one(Ax_i):
         num = klujax.factor(Ai, Aj, Ax_i, symbolic)
-        return klujax.solve_with_numeric(num, b, symbolic)
+        result = klujax.solve_with_numeric(num, b, symbolic)
+        klujax.free_numeric(num, dependency=result)
+        return result
 
     x_sp = jax.vmap(solve_one)(Ax_batch)
 

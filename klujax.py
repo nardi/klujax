@@ -538,12 +538,7 @@ def solve_with_numeric(
     """
     num_h = getattr(numeric, "handle", numeric)
     sym_h = getattr(symbolic, "handle", symbolic)
-    result = _solve_with_numeric_jit(num_h, b, sym_h)
-
-    # Auto-cleanup if the handle was created inside a JIT block.
-    if isinstance(num_h, jax.core.Tracer) and isinstance(numeric, KLUHandleManager):
-        free_numeric(numeric, dependency=result)
-    return result
+    return _solve_with_numeric_jit(num_h, b, sym_h)
 
 
 @jax.jit
@@ -579,11 +574,7 @@ def tsolve_with_numeric(
     """
     num_h = getattr(numeric, "handle", numeric)
     sym_h = getattr(symbolic, "handle", symbolic)
-    result = _tsolve_with_numeric_jit(num_h, b, sym_h)
-
-    if isinstance(num_h, jax.core.Tracer) and isinstance(numeric, KLUHandleManager):
-        free_numeric(numeric, dependency=result)
-    return result
+    return _tsolve_with_numeric_jit(num_h, b, sym_h)
 
 
 @jax.jit
