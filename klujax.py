@@ -191,20 +191,28 @@ class KLUHandleManager:
         self._owner = owner
         self._freed = False
 
-    def close(self) -> None:
-        """Release the C++ resource if this instance is the owner."""
+    def close(self) -> bool:
+        """Release the C++ resource if this instance is the owner.
+
+        Returns a boolean indicating if the resource has been freed.
+        """
         # Safety check: If the interpreter is shutting down, 'jax' might be None.
         # If so, we can simply return, as the OS will reclaim the memory momentarily.
         if jax is None:
-            return
+            return True
 
-        if self._freed or isinstance(self.handle, jax.core.Tracer):
-            return
+        if self._freed:
+            return True
+
+        if isinstance(self.handle, jax.core.Tracer):
+            return False
 
         if self._owner and self.free_callable:
             with contextlib.suppress(Exception):
                 self.free_callable(self.handle)
+
         self._freed = True
+        return True
 
     def __enter__(self) -> Self:
         return self
@@ -249,8 +257,9 @@ def free_symbolic(symbolic: KLUHandleManager | Array, dependency: Any = None) ->
 
     """
     if isinstance(symbolic, KLUHandleManager):
-        symbolic.close()
-        return jnp.array(0, dtype=jnp.int32)
+        freed = symbolic.close()
+        if freed:
+            return jnp.array(0, dtype=jnp.int32)
 
     handle = getattr(symbolic, "handle", symbolic)
     if isinstance(handle, jax.core.Tracer) and dependency is not None:
@@ -276,8 +285,9 @@ def free_numeric(numeric: KLUHandleManager | Array, dependency: Any = None) -> A
 
     """
     if isinstance(numeric, KLUHandleManager):
-        numeric.close()
-        return jnp.array(0, dtype=jnp.int32)
+        freed = numeric.close()
+        if freed:
+            return jnp.array(0, dtype=jnp.int32)
 
     handle = getattr(numeric, "handle", numeric)
     if isinstance(handle, jax.core.Tracer) and dependency is not None:
