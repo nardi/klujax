@@ -263,13 +263,7 @@ def free_symbolic(symbolic: KLUHandleManager | Array, dependency: Any = None) ->
 
     handle = getattr(symbolic, "handle", symbolic)
     if isinstance(handle, jax.core.Tracer) and dependency is not None:
-        token = jax.tree_util.tree_leaves(dependency)[0]
-        return lax.cond(
-            jnp.array(True),  # noqa: FBT003
-            lambda ops: free_symbolic_p.bind(ops[0]),
-            lambda _: jnp.array(0, dtype=jnp.int32),
-            operand=(handle, token),
-        )
+        handle, _ = lax.optimization_barrier((handle, dependency))
     return free_symbolic_p.bind(handle)
 
 
@@ -291,13 +285,7 @@ def free_numeric(numeric: KLUHandleManager | Array, dependency: Any = None) -> A
 
     handle = getattr(numeric, "handle", numeric)
     if isinstance(handle, jax.core.Tracer) and dependency is not None:
-        token = jax.tree_util.tree_leaves(dependency)[0]
-        return lax.cond(
-            jnp.array(True),  # noqa: FBT003
-            lambda ops: free_numeric_p.bind(ops[0]),
-            lambda _: jnp.array(0, dtype=jnp.int32),
-            operand=(handle, token),
-        )
+        handle, _ = lax.optimization_barrier((handle, dependency))
     return free_numeric_p.bind(handle)
 
 
