@@ -1649,6 +1649,37 @@ def general_vmap_refactor(
     raise ValueError(msg)
 
 
+def free_numeric_p_vmap(
+    vector_arg_values: tuple[Array],
+    batch_axes: tuple[int | None],
+) -> tuple[Array, int | None]:
+    return (
+        jax.vmap(
+            jax.custom_batching.sequential_vmap(free_numeric_p.bind), in_axes=batch_axes
+        )(*vector_arg_values),
+        batch_axes[0],
+    )
+
+
+batching.primitive_batchers[free_numeric_p] = free_numeric_p_vmap
+
+
+def free_symbolic_p_vmap(
+    vector_arg_values: tuple[Array],
+    batch_axes: tuple[int | None],
+) -> tuple[Array, int | None]:
+    return (
+        jax.vmap(
+            jax.custom_batching.sequential_vmap(free_symbolic_p.bind),
+            in_axes=batch_axes,
+        )(*vector_arg_values),
+        batch_axes[0],
+    )
+
+
+batching.primitive_batchers[free_symbolic_p] = free_symbolic_p_vmap
+
+
 # Transposition =======================================================================
 
 
