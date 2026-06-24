@@ -6,6 +6,7 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build-wheels:
@@ -26,27 +27,44 @@ jobs:
 
     steps:
       - name: Set up QEMU
-        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'aarch64'
+        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'aarch64'
         uses: docker/setup-qemu-action@v2
         with:
           platforms: arm64
       - name: Checkout Repository
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         uses: actions/checkout@v4
       - name: Install just
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         uses: extractions/setup-just@v2
       - name: Clone Suitesparse
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         run: just suitesparse
       - name: Clone XLA
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         run: just xla
       - name: Clone Pybind11
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         run: just pybind11
+      - name: Inject local version (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        shell: python
+        run: |
+          import os, re, pathlib
+          sha = os.environ["GITHUB_SHA"][:7]
+          run = os.environ["GITHUB_RUN_NUMBER"]
+          p = pathlib.Path("pyproject.toml")
+          text = p.read_text()
+          text = re.sub(
+              r'(?m)^version = "([^"]+)"',
+              lambda m: f'version = "{m.group(1)}+gha{run}.{sha}"',
+              text,
+              count=1,
+          )
+          p.write_text(text)
+          print(f"Patched version with local segment +gha{run}.{sha}")
       - name: Build Wheels
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         uses: pypa/cibuildwheel@v3.3.0
         env:
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
@@ -55,12 +73,36 @@ jobs:
           # CIBW_BEFORE_TEST: "pip install pytest"
           # CIBW_TEST_COMMAND: "python {project}/.github/run_tests.py"
       - name: Upload Wheels
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.cibw_archs }}
           path: ./wheelhouse/*.whl
           overwrite: true
+
+  prerelease:
+    name: Publish dev wheels
+    needs:
+      - build-wheels
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Publish pre-release with wheels
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: dispatch-${{ github.ref_name }}
+          name: "Dev wheels (${{ github.ref_name }})"
+          body: "Wheels built from `${{ github.ref_name }}` at ${{ github.sha }}. Install directly, e.g.: `uv pip install https://github.com/${{ github.repository }}/releases/download/dispatch-${{ github.ref_name }}/<wheel-file>.whl`"
+          prerelease: true
+          files: dist/*.whl
 
   release:
     name: Create Release
