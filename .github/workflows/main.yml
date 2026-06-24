@@ -6,6 +6,7 @@ on:
     branches:
       - main
   pull_request:
+  workflow_dispatch:
 
 jobs:
   build-wheels:
@@ -26,27 +27,44 @@ jobs:
 
     steps:
       - name: Set up QEMU
-        if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'aarch64'
+        if: (github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'aarch64'
         uses: docker/setup-qemu-action@v2
         with:
           platforms: arm64
       - name: Checkout Repository
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         uses: actions/checkout@v4
       - name: Install just
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         uses: extractions/setup-just@v2
       - name: Clone Suitesparse
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         run: just suitesparse
       - name: Clone XLA
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         run: just xla
       - name: Clone Pybind11
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         run: just pybind11
+      - name: Inject local version (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        shell: python
+        run: |
+          import os, re, pathlib
+          sha = os.environ["GITHUB_SHA"][:7]
+          run = os.environ["GITHUB_RUN_NUMBER"]
+          p = pathlib.Path("pyproject.toml")
+          text = p.read_text()
+          text = re.sub(
+              r'(?m)^version = "([^"]+)"',
+              lambda m: f'version = "{m.group(1)}+gha{run}.{sha}"',
+              text,
+              count=1,
+          )
+          p.write_text(text)
+          print(f"Patched version with local segment +gha{run}.{sha}")
       - name: Build Wheels
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         uses: pypa/cibuildwheel@v3.3.0
         env:
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
@@ -55,12 +73,103 @@ jobs:
           # CIBW_BEFORE_TEST: "pip install pytest"
           # CIBW_TEST_COMMAND: "python {project}/.github/run_tests.py"
       - name: Upload Wheels
-        if: startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || matrix.os == 'ubuntu-latest' && matrix.cibw_archs == 'native'
         uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.os }}-${{ matrix.cibw_archs }}
           path: ./wheelhouse/*.whl
           overwrite: true
+
+  prerelease:
+    name: Publish dev wheels
+    needs:
+      - build-wheels
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - name: Set release tag
+        run: echo "RELEASE_TAG=dispatch-${{ github.ref_name }}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+      - name: Download all wheels
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Generate uv source block
+        shell: python
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          import os, re, pathlib
+
+          base = f"https://github.com/{os.environ['REPO']}/releases/download/{os.environ['TAG']}"
+
+          def py_marker(t):
+              m = re.match(r"cp(\d)(\d+)$", t)
+              return f"python_version == '{m.group(1)}.{m.group(2)}'" if m else None
+
+          def platforms(tag):
+              res = []
+              for p in tag.split("."):
+                  if "linux" in p and p.endswith("x86_64"):
+                      res.append(("linux", "x86_64"))
+                  elif "linux" in p and p.endswith("aarch64"):
+                      res.append(("linux", "aarch64"))
+                  elif p.startswith("macosx") and p.endswith("x86_64"):
+                      res.append(("darwin", "x86_64"))
+                  elif p.startswith("macosx") and p.endswith("arm64"):
+                      res.append(("darwin", "arm64"))
+                  elif p.startswith("macosx") and p.endswith("universal2"):
+                      res += [("darwin", "x86_64"), ("darwin", "arm64")]
+                  elif p == "win_amd64":
+                      res.append(("win32", "AMD64"))
+                  elif p == "win_arm64":
+                      res.append(("win32", "ARM64"))
+              out = []
+              for x in res:
+                  if x not in out:
+                      out.append(x)
+              return out
+
+          entries = []
+          for whl in sorted(pathlib.Path("dist").glob("*.whl")):
+              pytag, abitag, plattag = whl.stem.rsplit("-", 3)[-3:]
+              pm = py_marker(pytag)
+              conds = [
+                  f"sys_platform == '{s}' and platform_machine == '{m}'"
+                  for s, m in platforms(plattag)
+              ]
+              plat = conds[0] if len(conds) == 1 else "(" + " or ".join(f"({c})" for c in conds) + ")"
+              marker = f"{pm} and {plat}" if pm else plat
+              entries.append((whl.name, marker))
+
+          lines = ["[tool.uv.sources]", "klujax = ["]
+          lines += [f'    {{ url = "{base}/{n}", marker = "{mk}" }},' for n, mk in entries]
+          lines.append("]")
+          toml = "\n".join(lines) + "\n"
+
+          pathlib.Path("uv-source.toml").write_text(toml)
+          print(toml)
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a") as f:
+                  f.write("## uv source for pyproject.toml\n\n```toml\n" + toml + "```\n")
+      - name: Publish pre-release with wheels
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "Dev wheels (${{ env.RELEASE_TAG }})"
+          body: |
+            Wheels built from `${{ github.ref_name }}` at ${{ github.sha }}.
+            See `uv-source.toml` (attached) for a `[tool.uv.sources]` block
+            pinning each wheel by platform marker.
+          prerelease: true
+          files: |
+            dist/*.whl
+            uv-source.toml
 
   release:
     name: Create Release
