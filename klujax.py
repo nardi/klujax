@@ -5,6 +5,7 @@
 __version__ = "0.5.0"
 __author__ = "Floris Laporte"
 __all__ = [
+    "KLUMemoryLeakWarning",
     "analyze",
     "coalesce",
     "dot",
@@ -25,6 +26,7 @@ __all__ = [
 import contextlib
 import os
 import sys
+import warnings
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any, Self
@@ -177,6 +179,10 @@ def coalesce(
 # Split Solve pointer management =====================================================
 
 
+class KLUMemoryLeakWarning(UserWarning):
+    """Warn that a handle was likely garbage-collected without being freed."""
+
+
 class KLUHandleManager:
     """RAII wrapper for KLU handles. Handles are freed on __del__ or __exit__."""
 
@@ -228,6 +234,23 @@ class KLUHandleManager:
     def __del__(self) -> None:
         if hasattr(self, "close"):
             self.close()
+
+        # If an owning manager gets GC'd while still holding an unfreed handle,
+        # this is because it needed to be freed explicitly but this never
+        # happened. To inform the user of this, we raise a warning here.
+        if (
+            jax is not None
+            and getattr(self, "_owner", False)
+            and not getattr(self, "_freed", True)
+            and not isinstance(getattr(self, "handle", None), jax.core.Tracer)
+        ):
+            warnings.warn(
+                "An owning KLUHandleManager was garbage-collected without its "
+                "handle being freed. Free it explicitly via `free_symbolic` or "
+                "`free_numeric` to avoid a possible memory leak.",
+                KLUMemoryLeakWarning,
+                stacklevel=2,
+            )
 
 
 def _klu_flatten(obj: KLUHandleManager) -> tuple[tuple[()], tuple[Array, Callable]]:
